@@ -206,8 +206,7 @@ const args = yargs
   .scriptName('run-e2e')
   .example('run-e2e')
   .example('run-e2e /tmp/redwood-app --ts')
-  .help()
-  .strict().argv
+  .help().argv
 
 const REDWOODJS_FRAMEWORK_PATH = path.resolve(__dirname, '..')
 let REDWOOD_PROJECT_DIRECTORY =
