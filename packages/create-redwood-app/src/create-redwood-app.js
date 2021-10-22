@@ -69,8 +69,7 @@ const {
     type: 'boolean',
     describe: 'Create even if target directory is empty',
   })
-  .version(version)
-  .strict().argv
+  .version(version).argv
 
 const targetDir = String(args).replace(/,/g, '-')
 if (!targetDir) {
