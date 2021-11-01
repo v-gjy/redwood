@@ -112,7 +112,7 @@ const ApolloProviderWithFetchConfig: React.FunctionComponent<{
   let link = rwLink
 
   if (userLink) {
-    link = typeof userLink === 'function' ? userLink(rwLink) : (link = userLink)
+    link = typeof userLink === 'function' ? userLink(rwLink) : userLink
   }
 
   const client = new ApolloClient({
