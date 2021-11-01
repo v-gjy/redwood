@@ -1,12 +1,13 @@
 import type { ApolloClientOptions } from '@apollo/client'
 import * as apolloClient from '@apollo/client'
 import { setContext } from '@apollo/client/link/context'
-// Note: Importing directly from `apollo/client` does not work properly in Storybook.
+
+// Storybook doesn't like us importing directly from `apollo/client`.
 const {
   ApolloProvider,
   ApolloClient,
   ApolloLink,
-  createHttpLink,
+  HttpLink,
   InMemoryCache,
   useQuery,
   useMutation,
@@ -23,12 +24,14 @@ import {
 import { GraphQLHooksProvider } from '../components/GraphQLHooksProvider'
 
 export type ApolloClientCacheConfig = apolloClient.InMemoryCacheConfig
+type ApolloLinkType = apolloClient.ApolloLink
 
 export type GraphQLClientConfigProp = Omit<
   ApolloClientOptions<unknown>,
-  'cache'
+  'cache' | 'link'
 > & {
   cacheConfig?: ApolloClientCacheConfig
+  link?: ApolloLinkType | ((rwLink: ApolloLinkType) => ApolloLinkType)
 }
 
 export type UseAuthProp = () => AuthContextInterface
@@ -37,8 +40,15 @@ const ApolloProviderWithFetchConfig: React.FunctionComponent<{
   config?: GraphQLClientConfigProp
   useAuth: UseAuthProp
 }> = ({ config = {}, children, useAuth }) => {
-  const { uri, headers } = useFetchConfig()
-  const { getToken, type: authProviderType, isAuthenticated } = useAuth()
+  /**
+   * Here we're using Apollo Link to customize Apollo Client's data flow.
+   *
+   * Although we're sending conventional HTTP-based requests and could just pass `uri` instead of `link`,
+   * we need to fetch a new token on every request, making middleware a good fit for this.
+   *
+   * @see {@link https://www.apollographql.com/docs/react/api/link/introduction/}
+   */
+  const { isAuthenticated, getToken, type } = useAuth()
 
   const withToken = setContext(async () => {
     if (isAuthenticated && getToken) {
@@ -50,14 +60,17 @@ const ApolloProviderWithFetchConfig: React.FunctionComponent<{
     return { token: null }
   })
 
+  const { headers, uri } = useFetchConfig()
+
   const authMiddleware = new ApolloLink((operation, forward) => {
     const { token } = operation.getContext()
 
-    // Only add auth headers when token is present
-    // Token is null, when !isAuthenticated
+    /**
+     * Only add auth headers when there's a token.
+     */
     const authHeaders = token
       ? {
-          'auth-provider': authProviderType,
+          'auth-provider': type,
           authorization: `Bearer ${token}`,
         }
       : {}
@@ -69,17 +82,54 @@ const ApolloProviderWithFetchConfig: React.FunctionComponent<{
         ...authHeaders,
       },
     }))
+
     return forward(operation)
   })
 
-  const httpLink = createHttpLink({ uri })
+  /**
+   * A terminating link.
+   * Apollo Client uses this to send GraphQL operations to a server over HTTP.
+   *
+   * @see {@link https://www.apollographql.com/docs/react/api/link/introduction/#the-terminating-link}
+   */
+  const httpLink = new HttpLink({ uri })
 
-  const { cacheConfig, ...forwardConfig } = config ?? {}
+  /**
+   * The order here's important.
+   */
+  const rwLink = ApolloLink.from([withToken, authMiddleware, httpLink])
+
+  /**
+   * If the user provides a link that's a function,
+   * we want to call it with our link.
+   *
+   * If it's not, we just want to use it.
+   *
+   * And if they don't provide it, we just want to use ours.
+   */
+  const { link: userLink, cacheConfig, ...rest } = config ?? {}
+
+  let link = rwLink
+
+  if (userLink) {
+    link = typeof userLink === 'function' ? userLink(rwLink) : (link = userLink)
+  }
 
   const client = new ApolloClient({
+    link,
     cache: new InMemoryCache(cacheConfig),
-    ...forwardConfig,
-    link: ApolloLink.from([withToken, authMiddleware.concat(httpLink)]),
+    /**
+     * Default options for every Cell.
+     *
+     * @see {@link https://www.apollographql.com/docs/react/api/core/ApolloClient/#example-defaultoptions-object}
+     */
+    defaultOptions: {
+      watchQuery: {
+        fetchPolicy: 'cache-and-network',
+        notifyOnNetworkStatusChange: true,
+      },
+    },
+    ...rest,
   })
 
   return <ApolloProvider client={client}>{children}</ApolloProvider>
